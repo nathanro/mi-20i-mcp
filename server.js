@@ -8,14 +8,43 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Helper function to make 20i API calls with proper authentication
+// Middleware de autenticación básica
+const authenticateUser = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="20i MCP Server"');
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  // Decodificar credenciales
+  const base64Credentials = authHeader.split(' ')[1];
+  const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+  const [username, password] = credentials.split(':');
+
+  // Verificar credenciales
+  const validUsername = process.env.MCP_USERNAME;
+  const validPassword = process.env.MCP_PASSWORD;
+
+  if (!validUsername || !validPassword) {
+    return res.status(500).json({ error: 'Server misconfigured' });
+  }
+
+  if (username !== validUsername || password !== validPassword) {
+    res.set('WWW-Authenticate', 'Basic realm="20i MCP Server"');
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  next();
+};
+
+// Helper function para 20i API
 async function make20iAPICall(endpoint) {
   const headers = {
     'User-Agent': 'MCP-Server/1.0',
     'Content-Type': 'application/json'
   };
 
-  // Try different authentication methods
   if (process.env.TWENTYI_COMBINED_KEY) {
     headers['Authorization'] = `Bearer ${process.env.TWENTYI_COMBINED_KEY}`;
   } else if (process.env.TWENTYI_OAUTH_KEY) {
@@ -24,7 +53,6 @@ async function make20iAPICall(endpoint) {
     headers['Authorization'] = `Bearer ${process.env.TWENTYI_API_KEY}`;
   }
 
-  // Also try X-API-Key header
   if (process.env.TWENTYI_API_KEY) {
     headers['X-API-Key'] = process.env.TWENTYI_API_KEY;
   }
@@ -32,8 +60,24 @@ async function make20iAPICall(endpoint) {
   return await axios.get(`https://api.20i.com${endpoint}`, { headers });
 }
 
-// 20i API endpoints
-app.get('/20i/domains', async (req, res) => {
+// Endpoints públicos (sin autenticación)
+app.get('/', (req, res) => {
+  res.json({
+    message: '20i MCP Server',
+    status: 'Authentication required for protected endpoints'
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    auth_configured: !!(process.env.MCP_USERNAME && process.env.MCP_PASSWORD)
+  });
+});
+
+// Endpoints protegidos (requieren usuario/contraseña)
+app.get('/20i/domains', authenticateUser, async (req, res) => {
   try {
     const response = await make20iAPICall('/domain');
     res.json(response.data);
@@ -47,7 +91,7 @@ app.get('/20i/domains', async (req, res) => {
   }
 });
 
-app.get('/20i/packages', async (req, res) => {
+app.get('/20i/packages', authenticateUser, async (req, res) => {
   try {
     const response = await make20iAPICall('/package');
     res.json(response.data);
@@ -61,7 +105,7 @@ app.get('/20i/packages', async (req, res) => {
   }
 });
 
-app.get('/20i/domain/:domain', async (req, res) => {
+app.get('/20i/domain/:domain', authenticateUser, async (req, res) => {
   try {
     const response = await make20iAPICall(`/domain/${req.params.domain}`);
     res.json(response.data);
@@ -75,32 +119,6 @@ app.get('/20i/domain/:domain', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    env_vars: {
-      has_api_key: !!process.env.TWENTYI_API_KEY,
-      has_oauth_key: !!process.env.TWENTYI_OAUTH_KEY,
-      has_combined_key: !!process.env.TWENTYI_COMBINED_KEY
-    }
-  });
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: '20i MCP Server is running',
-    endpoints: [
-      'GET /health - Health check',
-      'GET /20i/domains - List all domains',
-      'GET /20i/packages - List all packages',
-      'GET /20i/domain/:domain - Get domain info'
-    ]
-  });
-});
-
 app.listen(port, () => {
-  console.log(`Multi-MCP server running on port ${port}`);
+  console.log(`Secure 20i MCP server running on port ${port}`);
 });

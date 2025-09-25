@@ -32,14 +32,8 @@ const authenticateUser = (req, res, next) => {
   next();
 };
 
-// Helper para llamadas API de 20i con codificación base64 correcta
+// Helper para llamadas API de 20i - PROBANDO LOS 3 MÉTODOS
 async function make20iAPICall(endpoint, method = 'GET', data = null) {
-  const headers = {
-    'User-Agent': '20i-MCP-Server/1.0',
-    'Content-Type': 'application/json'
-  };
-
-  // Obtener el token apropiado
   let token = null;
   if (process.env.TWENTYI_COMBINED_KEY) {
     token = process.env.TWENTYI_COMBINED_KEY;
@@ -53,47 +47,82 @@ async function make20iAPICall(endpoint, method = 'GET', data = null) {
     throw new Error('No 20i API token configured');
   }
 
-  // Codificar el token en base64 como requiere 20i
-  const base64Token = Buffer.from(token).toString('base64');
-  headers['Authorization'] = `Bearer ${base64Token}`;
-
-  const config = {
-    method,
-    url: `https://api.20i.com${endpoint}`,
-    headers,
+  // MÉTODO 1: Authorization header con base64
+  const headers1 = {
+    'User-Agent': '20i-MCP-Server/1.0',
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${Buffer.from(token).toString('base64')}`
   };
 
+  // MÉTODO 2: Authorization header sin base64
+  const headers2 = {
+    'User-Agent': '20i-MCP-Server/1.0',
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  };
+
+  // MÉTODO 3: access_token en URL
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const urlWithToken = `https://api.20i.com${endpoint}${separator}access_token=${token}`;
+
+  console.log('=== 20i API DEBUG ===');
+  console.log('Endpoint:', endpoint);
+  console.log('Method:', method);
+  console.log('Token length:', token.length);
+  console.log('Token starts with:', token.substring(0, 10) + '...');
+  console.log('Base64 token:', Buffer.from(token).toString('base64').substring(0, 20) + '...');
+
+  // Probar los 3 métodos
+  const methods = [
+    { name: 'Bearer + Base64', config: { method, url: `https://api.20i.com${endpoint}`, headers: headers1 } },
+    { name: 'Bearer + Raw', config: { method, url: `https://api.20i.com${endpoint}`, headers: headers2 } },
+    { name: 'URL access_token', config: { method, url: urlWithToken, headers: { 'User-Agent': '20i-MCP-Server/1.0', 'Content-Type': 'application/json' } } }
+  ];
+
   if (data) {
-    config.data = data;
+    methods[0].config.data = data;
+    methods[1].config.data = data;
+    methods[2].config.data = data;
   }
 
-  return await axios(config);
+  for (const { name, config } of methods) {
+    try {
+      console.log(`Trying ${name}...`);
+      console.log('URL:', config.url.substring(0, 100) + (config.url.length > 100 ? '...' : ''));
+      const response = await axios(config);
+      console.log(`✅ ${name} WORKED! Status:`, response.status);
+      return response;
+    } catch (error) {
+      console.log(`❌ ${name} failed:`, error.response?.status, error.response?.statusText);
+      if (error.response?.data) {
+        console.log('Error details:', JSON.stringify(error.response.data).substring(0, 200));
+      }
+      if (error.response?.headers) {
+        console.log('Response headers:', Object.keys(error.response.headers));
+      }
+    }
+  }
+
+  throw new Error('All 3 authentication methods failed');
 }
 
 // Endpoints públicos
 app.get('/', (req, res) => {
   res.json({
     message: '20i MCP Server - Complete Hosting Management',
-    version: '2.0.0',
+    version: '2.0.0-debug',
     features: [
-      'Complete 20i API integration',
-      'WordPress automation',
-      'Database management',
-      'Email services',
-      'Security tools',
-      'Backup & restore',
-      'CDN management'
+      'Testing all 3 20i authentication methods',
+      'Bearer + Base64',
+      'Bearer + Raw token',
+      'URL access_token parameter'
     ],
     endpoints: {
+      test: ['/20i/domains - Test authentication'],
       account: ['/reseller-info', '/balance'],
-      domains: ['/20i/domains', '/domain/:domain', '/dns/:domain'],
+      domains: ['/domain/:domain', '/dns/:domain'],
       hosting: ['/packages', '/package/:id'],
-      wordpress: ['/wp/:packageId/status', '/wp/:packageId/plugins'],
-      databases: ['/mysql/databases', '/mysql/database'],
-      email: ['/email/accounts', '/email/account'],
-      security: ['/security/blocked-ips', '/security/block-ip'],
-      backups: ['/backups/snapshots', '/backups/snapshot'],
-      cdn: ['/cdn/features', '/cdn/purge-cache']
+      wordpress: ['/wp/:packageId/status', '/wp/:packageId/plugins']
     }
   });
 });
@@ -107,8 +136,27 @@ app.get('/health', (req, res) => {
       api_key: !!process.env.TWENTYI_API_KEY,
       oauth_key: !!process.env.TWENTYI_OAUTH_KEY,
       combined_key: !!process.env.TWENTYI_COMBINED_KEY
-    }
+    },
+    debug_mode: true
   });
+});
+
+// === TEST ENDPOINT - DOMAINS ===
+app.get('/20i/domains', authenticateUser, async (req, res) => {
+  try {
+    console.log('\n=== DOMAINS REQUEST START ===');
+    const response = await make20iAPICall('/domain');
+    console.log('SUCCESS: Got domains data');
+    console.log('Response keys:', Object.keys(response.data));
+    console.log('=== DOMAINS REQUEST END ===\n');
+    res.json(response.data);
+  } catch (error) {
+    console.error('FINAL ERROR:', error.message);
+    res.status(500).json({ 
+      error: error.message,
+      debug: 'Check server logs for detailed authentication attempts'
+    });
+  }
 });
 
 // === RESELLER & ACCOUNT ===
@@ -141,20 +189,6 @@ app.get('/balance', authenticateUser, async (req, res) => {
 });
 
 // === DOMAINS ===
-app.get('/20i/domains', authenticateUser, async (req, res) => {
-  try {
-    const response = await make20iAPICall('/domain');
-    res.json(response.data);
-  } catch (error) {
-    console.error('Domains error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
 app.get('/domain/:domain', authenticateUser, async (req, res) => {
   try {
     const response = await make20iAPICall(`/domain/${req.params.domain}`);
@@ -241,120 +275,10 @@ app.get('/wp/:packageId/plugins', authenticateUser, async (req, res) => {
   }
 });
 
-// === DATABASES ===
-app.get('/mysql/databases', authenticateUser, async (req, res) => {
-  try {
-    const { packageId } = req.query;
-    if (!packageId) {
-      return res.status(400).json({ error: 'packageId query parameter required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/database`);
-    res.json(response.data);
-  } catch (error) {
-    console.error('MySQL databases error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
-app.post('/mysql/database', authenticateUser, async (req, res) => {
-  try {
-    const { packageId, name } = req.body;
-    if (!packageId || !name) {
-      return res.status(400).json({ error: 'packageId and name required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/database`, 'POST', { name });
-    res.json(response.data);
-  } catch (error) {
-    console.error('Create MySQL database error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
-// === EMAIL ===
-app.get('/email/accounts', authenticateUser, async (req, res) => {
-  try {
-    const { packageId } = req.query;
-    if (!packageId) {
-      return res.status(400).json({ error: 'packageId query parameter required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/email/account`);
-    res.json(response.data);
-  } catch (error) {
-    console.error('Email accounts error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
-app.post('/email/account', authenticateUser, async (req, res) => {
-  try {
-    const { packageId, username, password } = req.body;
-    if (!packageId || !username || !password) {
-      return res.status(400).json({ error: 'packageId, username and password required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/email/account`, 'POST', { username, password });
-    res.json(response.data);
-  } catch (error) {
-    console.error('Create email account error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
-// === SECURITY ===
-app.get('/security/blocked-ips', authenticateUser, async (req, res) => {
-  try {
-    const { packageId } = req.query;
-    if (!packageId) {
-      return res.status(400).json({ error: 'packageId query parameter required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/security/blocked-ip`);
-    res.json(response.data);
-  } catch (error) {
-    console.error('Blocked IPs error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
-// === BACKUPS ===
-app.get('/backups/snapshots', authenticateUser, async (req, res) => {
-  try {
-    const { packageId } = req.query;
-    if (!packageId) {
-      return res.status(400).json({ error: 'packageId query parameter required' });
-    }
-    const response = await make20iAPICall(`/package/${packageId}/timeline-storage/snapshot`);
-    res.json(response.data);
-  } catch (error) {
-    console.error('Snapshots error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText
-    });
-  }
-});
-
 app.listen(port, () => {
-  console.log(`Complete 20i MCP Server running on port ${port}`);
-  console.log(`Authentication: ${!!(process.env.MCP_USERNAME && process.env.MCP_PASSWORD) ? 'Configured' : 'NOT CONFIGURED'}`);
-  console.log(`20i Keys: ${!!(process.env.TWENTYI_API_KEY || process.env.TWENTYI_OAUTH_KEY || process.env.TWENTYI_COMBINED_KEY) ? 'Configured' : 'NOT CONFIGURED'}`);
+  console.log(`\n🚀 20i MCP Debug Server running on port ${port}`);
+  console.log(`🔐 Authentication: ${!!(process.env.MCP_USERNAME && process.env.MCP_PASSWORD) ? '✅ Configured' : '❌ NOT CONFIGURED'}`);
+  console.log(`🔑 20i Keys: ${!!(process.env.TWENTYI_API_KEY || process.env.TWENTYI_OAUTH_KEY || process.env.TWENTYI_COMBINED_KEY) ? '✅ Configured' : '❌ NOT CONFIGURED'}`);
+  console.log(`🐛 Debug Mode: ON - Check logs for authentication details`);
+  console.log(`📋 Test URL: https://yourapp.onrender.com/20i/domains\n`);
 });

@@ -35,16 +35,18 @@ const authenticateUser = (req, res, next) => {
 // Helper para llamadas API de 20i - CORREGIDO según documentación
 async function make20iAPICall(endpoint, method = 'GET', data = null) {
   let token = null;
-  if (process.env.TWENTYI_COMBINED_KEY) {
-    token = process.env.TWENTYI_COMBINED_KEY;
+  
+  // Try to get the API key from environment variables (same as working repo)
+  if (process.env.TWENTYI_API_KEY) {
+    token = process.env.TWENTYI_API_KEY;
   } else if (process.env.TWENTYI_OAUTH_KEY) {
     token = process.env.TWENTYI_OAUTH_KEY;
-  } else if (process.env.TWENTYI_API_KEY) {
-    token = process.env.TWENTYI_API_KEY;
+  } else if (process.env.TWENTYI_COMBINED_KEY) {
+    token = process.env.TWENTYI_COMBINED_KEY;
   }
 
   if (!token) {
-    throw new Error('No 20i API token configured');
+    throw new Error('No 20i API token configured. Please set TWENTYI_API_KEY, TWENTYI_OAUTH_KEY, or TWENTYI_COMBINED_KEY environment variable.');
   }
 
   console.log('=== 20i API CALL ===');
@@ -52,11 +54,13 @@ async function make20iAPICall(endpoint, method = 'GET', data = null) {
   console.log('Token length:', token.length);
   console.log('Token preview:', token.substring(0, 10) + '...');
 
-  // Usar token directamente como Bearer token (sin codificación base64)
+  // Usar base64 encoding como en el repositorio que funciona
+  const authHeader = `Bearer ${Buffer.from(token).toString('base64')}`;
+  
   const headers = {
     'User-Agent': '20i-MCP-Server/1.0',
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
+    'Authorization': authHeader
   };
 
   const config = {

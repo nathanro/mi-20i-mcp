@@ -56,7 +56,7 @@ async function make20iAPICall(endpoint, method = 'GET', data = null) {
   const headers = {
     'User-Agent': '20i-MCP-Server/1.0',
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
+   'Authorization': `Bearer ${Buffer.from(token).toString('base64')}` 
   };
 
   const config = {

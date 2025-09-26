@@ -52,11 +52,11 @@ async function make20iAPICall(endpoint, method = 'GET', data = null) {
   console.log('Token length:', token.length);
   console.log('Token preview:', token.substring(0, 10) + '...');
 
-  // Usar token directamente como en los ejemplos de 20i
+  // Usar token directamente como Bearer token (sin codificación base64)
   const headers = {
     'User-Agent': '20i-MCP-Server/1.0',
     'Content-Type': 'application/json',
-   'Authorization': `Bearer ${Buffer.from(token).toString('base64')}` 
+    'Authorization': `Bearer ${token}`
   };
 
   const config = {
